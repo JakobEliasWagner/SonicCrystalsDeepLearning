@@ -1,0 +1,2 @@
+Mtr_<Outer radius of ourter most layer in meter>_<Inner radius of outer most layer in meter>_<Gab width of outer most layer>_<scale factor>_<#layers>_<rows>x<columns>_<optimal_frequency>.msh
+The dot of floating point numbers have been removed (0.003 -> 0003)

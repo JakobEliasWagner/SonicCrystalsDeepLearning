@@ -1,0 +1,2 @@
+D_<Radius>_<rows>x<columns>_<optimal frequency>.msh
+For floationg point numbers the dot has been removed (0.003 -> 0003)

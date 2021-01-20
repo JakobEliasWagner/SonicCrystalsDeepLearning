@@ -1,0 +1,3 @@
+C_<Outer radius in meter>_<Inner radius in meter>_<Gap width in meter>_<rows>x<columns>_<optimal frequency>.msh
+The dot of floating point numbers have been removed (0.003 -> 0003)
+
