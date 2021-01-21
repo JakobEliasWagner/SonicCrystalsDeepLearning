@@ -38,7 +38,7 @@ class MeshGenerator:
                                             z=0)
                 obstacle_sfs.extend(shape)
 
-        # boolean substraction of obstacles from fluid space
+        # boolean subtraction of obstacles from fluid space
         fluid = gmsh.model.occ.cut([(2, rect)], [(2, surface) for surface in obstacle_sfs])
 
         gmsh.model.occ.synchronize()
@@ -85,7 +85,7 @@ class MeshGenerator:
         gmsh.model.setPhysicalName(1, obstacle_marker, "Obstacle")
 
         # Resolution
-        gmsh.model.geo.synchronize()
+        gmsh.model.occ.synchronize()
         # Calculate Resolution for frequency
         lmbda = 343. / f  # wave length at 20°C and at SL
         lc = lmbda / epwl
@@ -122,16 +122,14 @@ class MeshGenerator:
 
 
 if __name__ == "__main__":
-    obs = C(0.1, 0.08, 0.05)
-    obs1 = Disk(0.1)
-    obs2 = Matryoshka(0.1, 0.08, 0.05, 0.7, 8)
+    obs = Disk(0.0065)
 
-    mesh_gen = MeshGenerator(obstacle=obs2,
-                             a=0.3,
-                             rows=2,
-                             cols=2,
+    mesh_gen = MeshGenerator(obstacle=obs,
+                             a=0.022,
+                             rows=10,
+                             cols=10,
                              left_space=3,
                              bottom_space=.5,
                              right_space=3,
                              top_space=.5)
-    mesh_gen.run(f=5000, epwl=10)
+    mesh_gen.run(f=8000, epwl=10)
