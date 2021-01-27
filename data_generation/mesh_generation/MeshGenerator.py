@@ -5,7 +5,8 @@ from Shapes import Disk, C, Matryoshka
 
 
 class MeshGenerator:
-    def __init__(self, obstacle, a, rows, cols, left_space, bottom_space, right_space, top_space):
+    def __init__(self, obstacle, a, rows, cols, left_space, bottom_space, right_space, top_space, left_pml_size=0,
+                 right_pml_size=5):
         self.obstacle = obstacle
         self.a = a
         self.rows = rows
@@ -14,6 +15,8 @@ class MeshGenerator:
         self.bottom_space = bottom_space
         self.right_space = right_space
         self.top_space = top_space
+        self.left_pml_size = left_pml_size
+        self.right_pml_size = right_pml_size
         self.L = (left_space + right_space + cols - 1) * a
         self.H = (top_space + bottom_space + rows - 1) * a
 
@@ -41,13 +44,38 @@ class MeshGenerator:
         # boolean subtraction of obstacles from fluid space
         fluid = gmsh.model.occ.cut([(2, rect)], [(2, surface) for surface in obstacle_sfs])
 
-        gmsh.model.occ.synchronize()
+        # Add PML areas
+        lmbda = 343. / f  # wave length at 20°C and at SL
+        l_pml = r_pml = None
+        pmls = []
+        if self.left_pml_size > 0:
+            left_pml_length = self.left_pml_size * lmbda  # calculated as multiples of wave length
+            left_pml = gmsh.model.occ.addRectangle(0, 0, 0, -left_pml_length, self.H)  # left pml area
+            pmls.append(left_pml)
+
+        if self.right_pml_size > 0:
+            right_pml_length = self.right_pml_size * lmbda  # calculated as multiples of wave length
+            right_pml = gmsh.model.occ.addRectangle(self.L, 0, 0, right_pml_length, self.H)  # right pml area
+            pmls.append(right_pml)
+
+        if len(pmls) > 0:
+            gmsh.model.occ.fragment([fluid[0][0]], [(2, x) for x in pmls])  # connect surfaces
 
         # physical Groups
+        gmsh.model.occ.synchronize()
         surfaces = gmsh.model.getEntities(dim=2)
-        fluid_marker = 11
-        gmsh.model.addPhysicalGroup(surfaces[0][0], [surfaces[0][1]], fluid_marker)
-        gmsh.model.setPhysicalName(surfaces[0][0], fluid_marker, "Fluid")
+        fluid_marker, pml_marker = 11, 13
+
+        pml_surfaces = []
+        for surface in surfaces:
+            com = gmsh.model.occ.getCenterOfMass(surface[0], surface[1])
+            if 0 < com[0] < self.L:
+                gmsh.model.addPhysicalGroup(surface[0], [surface[1]], fluid_marker)
+                gmsh.model.setPhysicalName(surfaces[0][0], fluid_marker, "Fluid")
+            else:
+                pml_surfaces.append(surface)
+        gmsh.model.addPhysicalGroup(surfaces[0][0], [x[1] for x in pml_surfaces], pml_marker)
+        gmsh.model.setPhysicalName(surfaces[0][0], pml_marker, "Perfectly Matched Layer")
 
         left_marker, bottom_marker, right_marker, top_marker, obstacle_marker = 1, 3, 5, 7, 9
 
@@ -86,8 +114,7 @@ class MeshGenerator:
 
         # Resolution
         gmsh.model.occ.synchronize()
-        # Calculate Resolution for frequency
-        lmbda = 343. / f  # wave length at 20°C and at SL
+        # Calculate Resolution in dependence on the frequency
         lc = lmbda / epwl
 
         # Define Distance field on circle curve. this field returns the distance to (100 equidistant points on)
@@ -122,7 +149,7 @@ class MeshGenerator:
 
 
 if __name__ == "__main__":
-    obs = Disk(0.0065)
+    obs = C(0.0065, 0.005, 0.004)
 
     mesh_gen = MeshGenerator(obstacle=obs,
                              a=0.022,
@@ -132,4 +159,5 @@ if __name__ == "__main__":
                              bottom_space=.5,
                              right_space=3,
                              top_space=.5)
-    mesh_gen.run(f=8000, epwl=10)
+    for x in range(500, 20001, 500):
+        mesh_gen.run(f=x, epwl=10)
