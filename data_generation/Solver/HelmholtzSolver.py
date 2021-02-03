@@ -1,8 +1,14 @@
-import dolfinx
-import dolfinx.plotting
-from mpi4py import MPI
-import ufl
 import numpy as np
+import time
+import matplotlib
+import dolfinx
+import dolfinx.geometry
+import ufl
+from mpi4py import MPI
+from dolfinx.io import XDMFFile
+from dolfinx.cpp.mesh import CellType
+from petsc4py import PETSc
+import matplotlib.pyplot as plt
 import sys
 import os
 
@@ -12,71 +18,128 @@ sys.path.append(os.path.join(CURR_DIR, "../utilities"))
 from gmsh_helpers import read_from_msh
 
 
+def save(mesh_, u_, name):
+    with XDMFFile(MPI.COMM_WORLD, name, "w") as file:
+        file.write_mesh(mesh_)
+        file.write_function(u_)
+
+
+class IncidentWave:
+    def __init__(self, k0):
+        self.k = k0
+
+    def eval(self, x):
+        return np.exp(1.0j * self.k * x[0])
+
+
+class AdiabaticLayer:
+    def __init__(self, deg_absorber, k0, lmda):
+        self.deg_absorber = deg_absorber
+        self.k0 = k0
+        d_absorb = 5 * lmda
+        rt = 1.0e-6  # round-trip reflection
+        self.sigma_0 = -(self.deg_absorber + 1) * np.log(rt) / (2.0 * d_absorb)
+
+    def eval(self, x):
+        # In absorbing layer: k = k0 + 1j * sigma
+        # => k^2 = (k0 + 1j*sigma)^2 = k0^2 + 2j*sigma - sigma^2
+        # Therefore, the 2j*sigma - sigma^2 piece must be included in the layer.
+
+        # Find domains with absorbtion-tag
+        in_absorber_x = (np.abs(x[0]) >= 0.168)
+
+        # Function sigma = sigma_0 * x^d, where x is the depth into adiabatic layer
+        sigma_x = self.sigma_0 * (np.abs(x[0]) >= 0.168) ** self.deg_absorber
+
+        x_layers = in_absorber_x * (2j * sigma_x * self.k0 - sigma_x ** 2)
+
+        return x_layers
+
+
 class HelmholtzSolver:
-    def __init__(self, deg):
-        # Physical constants for air at 20°C and SL
-        self.c = 343.
-        self.rho_f = 1.2041
+    def __init__(self, c=343., rho_0=1.2041, degree=3, deg_absorber=2):
+        self.check_PETSc()
 
-        # Simulation properties
-        self.deg = deg
+        # physical constants at 20°C and SL
+        self.c = c
+        self.rho_0 = rho_0
+        self.f = None
+        self.omega = None
+        self.lmda = None
+        self.k0 = None
 
-    def run(self, freq, file_name, amplitude):
-        # Derived physical quantities
-        omega = 2. * np.pi * freq
-        k = omega / self.c
+        # solver constants
+        self.degree = degree  # polynomial degree
+        self.deg_absorber = deg_absorber  # degree of absorption nominal
+
+    def check_PETSc(self):
+        if not dolfinx.has_petsc_complex:
+            raise Exception("This solver only works with PETSc-complex. Try switching to complex builds of DOLFINX.")
+
+    def solve(self, f, filename):
+        # redifine constans for specific frequency
+        self.f = f
+        self.omega = 2 * np.pi * f
+        self.lmda = self.c / f
+        self.k0 = self.omega / self.c
 
         # Load mesh
-        mesh, cell_tags, facet_tags = read_from_msh(file_name, cell_data=True, facet_data=True, gdim=2)
-        n = ufl.FacetNormal(mesh)
+        mesh, cell_tags, facet_tags = read_from_msh(
+            filename,
+            cell_data=True, facet_data=True, gdim=2)
 
-        # idk experiments
-        ds_excitation = ufl.Measure("ds", domain=mesh, subdomain_data=facet_tags, subdomain_id=1)
+        # Define function space
+        V = dolfinx.FunctionSpace(mesh, ("Lagrange", self.degree))
 
-        # Source amplitude
-        if dolfinx.has_petsc_complex:
-            amp = (1 + 1j) * amplitude
-        else:
-            amp = amplitude
+        # Interpolate wavenumber k onto V
+        k = dolfinx.Constant(V, self.k0)
 
-        # Define Test and trial function space
-        V = dolfinx.FunctionSpace(mesh, ("Lagrange", self.deg))
+        # Interpolate absorbing layer piece of wavenumber k_absorb onto V
+        k_absorb = dolfinx.Function(V)
+        adiabatic_layer = AdiabaticLayer(self.deg_absorber, self.k0, self.lmda)
+        k_absorb.interpolate(adiabatic_layer.eval)
 
-        # Define Function for Perfectly Matched Layer
-        p = 2  # degree of sigma function in PML transformation (Usually power function)
-        sigma = dolfinx.Function(V)
-        sigma.interpolate(lambda x: np.maximum(0, x[0] - 0.33) ** p)
-
-        # Test and trial function
-        u = ufl.TrialFunction(V)
-        chi = ufl.TestFunction(V)
-        v_s = dolfinx.Function(V)
-        v_s_const = dolfinx.Constant(V, amp)
+        # Interpolate incident wave field onto V
+        ui = dolfinx.Function(V)
+        ui_expr = IncidentWave(self.k0)
+        ui.interpolate(ui_expr.eval)
 
         # Define variational problem
-        v_s.interpolate(lambda x: amp * np.cos(k * x[0]) * np.cos(k * x[1]))
-        a = ufl.inner(ufl.grad(u), ufl.grad(chi)) * (1 / (1 - 1j * sigma)) * ufl.dx - k ** 2 * ufl.inner(u,
-                                                                                                         chi) * (
-                    1 / (1 - 1j * sigma)) * ufl.dx
-        L = -1j * omega * self.rho_f * ufl.inner(v_s_const, chi) * ds_excitation
+        u = ufl.TrialFunction(V)
+        v = ufl.TestFunction(V)
 
-        # solve problem
-        uh = dolfinx.fem.Function(V)
-        uh.name = "u"
-        problem = dolfinx.fem.LinearProblem(a, L, u=uh)
-        problem.solve()
+        a = ufl.inner(ufl.grad(u), ufl.grad(v)) * ufl.dx \
+            - k ** 2 * ufl.inner(u, v) * ufl.dx \
+            - k_absorb * ufl.inner(u, v) * ufl.dx
 
-        self.save(mesh, uh, f"../Solution/{freq}_sim.xdmf")
+        L = -1j * self.omega * self.rho_0 * ufl.inner(ui, v) * ufl.dx
 
-    def save(self, mesh_, uh_, name):
-        # Save solution in XDMF format (to be viewed in Paraview, for example)
-        with dolfinx.io.XDMFFile(MPI.COMM_WORLD, name, "w",
-                                 encoding=dolfinx.io.XDMFFile.Encoding.HDF5) as file:
-            file.write_mesh(mesh_)
-            file.write_function(uh_)
+        # Assemble matrix and vector and set up direct solver
+        A = dolfinx.fem.assemble_matrix(a)
+        A.assemble()
+        b = dolfinx.fem.assemble_vector(L)
+        b.ghostUpdate(addv=PETSc.InsertMode.ADD, mode=PETSc.ScatterMode.REVERSE)
+
+        solver = PETSc.KSP().create(mesh.mpi_comm())
+        opts = PETSc.Options()
+        opts["ksp_type"] = "preonly"
+        opts["pc_type"] = "lu"
+        opts["pc_factor_mat_solver_type"] = "mumps"
+        solver.setFromOptions()
+        solver.setOperators(A)
+
+        # Solve linear system
+        u = dolfinx.Function(V)
+        start = time.time()
+        solver.solve(b, u.vector)
+        end = time.time()
+        time_elapsed = end - start
+        print('Solve time: ', time_elapsed)
+        u.vector.ghostUpdate(addv=PETSc.InsertMode.INSERT,
+                             mode=PETSc.ScatterMode.FORWARD)
+        save(mesh, u, "sol.xdmf")
 
 
 if __name__ == "__main__":
-    solver = HelmholtzSolver(1)
-    for x in range(500, 20001, 500):
-        solver.run(x, f"../mesh_generation/C-Shape_meshes/C_00065_0005_0004_10x10_{x}.msh", 1)
+    sol = HelmholtzSolver()
+    sol.solve(10000, "../mesh_generation/C-Shape_meshes/C_00065_0005_0004_10x10_25000.msh")

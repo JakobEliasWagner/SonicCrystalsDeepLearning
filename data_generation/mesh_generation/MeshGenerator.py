@@ -5,7 +5,7 @@ from Shapes import Disk, C, Matryoshka
 
 
 class MeshGenerator:
-    def __init__(self, obstacle, a, rows, cols, left_space, bottom_space, right_space, top_space, left_pml_size=0,
+    def __init__(self, obstacle, a, rows, cols, left_space, bottom_space, right_space, top_space, left_pml_size=5,
                  right_pml_size=5):
         self.obstacle = obstacle
         self.a = a
@@ -64,12 +64,14 @@ class MeshGenerator:
         # physical Groups
         gmsh.model.occ.synchronize()
         surfaces = gmsh.model.getEntities(dim=2)
+        gmsh.model.occ.translate(surfaces, -self.L / 2, -self.H / 2, 0)
+        gmsh.model.occ.synchronize()
         fluid_marker, pml_marker = 11, 13
 
         pml_surfaces = []
         for surface in surfaces:
             com = gmsh.model.occ.getCenterOfMass(surface[0], surface[1])
-            if 0 < com[0] < self.L:
+            if -self.L / 2 < com[0] < self.L / 2:
                 gmsh.model.addPhysicalGroup(surface[0], [surface[1]], fluid_marker)
                 gmsh.model.setPhysicalName(surfaces[0][0], fluid_marker, "Fluid")
             else:
@@ -86,22 +88,22 @@ class MeshGenerator:
             com = gmsh.model.occ.getCenterOfMass(curve[0], curve[1])
 
             # left wall
-            if np.allclose(com, [0, self.H / 2, 0]):
+            if np.allclose(com, [-self.L / 2, 0, 0]):
                 gmsh.model.addPhysicalGroup(curve[0], [curve[1]], left_marker)
                 gmsh.model.setPhysicalName(curve[0], left_marker, "Left Wall")
 
             # bottom wall
-            elif np.allclose(com, [self.L / 2, 0, 0]):
+            elif np.allclose(com, [0, -self.H / 2, 0]):
                 gmsh.model.addPhysicalGroup(curve[0], [curve[1]], bottom_marker)
                 gmsh.model.setPhysicalName(curve[0], bottom_marker, "Bottom Wall")
 
             # right wall
-            elif np.allclose(com, [self.L, self.H / 2, 0]):
+            elif np.allclose(com, [self.L / 2, 0, 0]):
                 gmsh.model.addPhysicalGroup(curve[0], [curve[1]], right_marker)
                 gmsh.model.setPhysicalName(curve[0], right_marker, "Right Wall")
 
             # top wall
-            elif np.allclose(com, [self.L / 2, self.H, 0]):
+            elif np.allclose(com, [0, self.H / 2, 0]):
                 gmsh.model.addPhysicalGroup(curve[0], [curve[1]], top_marker)
                 gmsh.model.setPhysicalName(curve[0], top_marker, "Top Wall")
 
@@ -138,6 +140,7 @@ class MeshGenerator:
 
         gmsh.model.mesh.field.setAsBackgroundMesh(3)
 
+        #gmsh.model.occ.translate(surfaces, -self.L / 2, 0, 0)
         gmsh.model.occ.synchronize()
 
         gmsh.model.mesh.generate(2)
@@ -159,5 +162,5 @@ if __name__ == "__main__":
                              bottom_space=.5,
                              right_space=3,
                              top_space=.5)
-    for x in range(500, 20001, 500):
-        mesh_gen.run(f=x, epwl=10)
+
+    mesh_gen.run(f=25000, epwl=10)
