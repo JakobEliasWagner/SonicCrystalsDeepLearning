@@ -162,5 +162,5 @@ if __name__ == "__main__":
                              bottom_space=.5,
                              right_space=3,
                              top_space=.5)
-
-    mesh_gen.run(f=25000, epwl=10)
+    x = 10000
+    mesh_gen.run(f=x, epwl=10)

@@ -108,6 +108,8 @@ class HelmholtzSolver:
         u = ufl.TrialFunction(V)
         v = ufl.TestFunction(V)
 
+        ds_exited = ufl.Measure("ds", domain=mesh, subdomain_data=facet_tags, subdomain_id=1)
+
         a = ufl.inner(ufl.grad(u), ufl.grad(v)) * ufl.dx \
             - k ** 2 * ufl.inner(u, v) * ufl.dx \
             - k_absorb * ufl.inner(u, v) * ufl.dx
@@ -137,9 +139,10 @@ class HelmholtzSolver:
         print('Solve time: ', time_elapsed)
         u.vector.ghostUpdate(addv=PETSc.InsertMode.INSERT,
                              mode=PETSc.ScatterMode.FORWARD)
-        save(mesh, u, "sol.xdmf")
+        save(mesh, u, f"../Solution/sol_{f}Hz.xdmf")
 
 
 if __name__ == "__main__":
     sol = HelmholtzSolver()
-    sol.solve(10000, "../mesh_generation/C-Shape_meshes/C_00065_0005_0004_10x10_25000.msh")
+    x = 9000
+    sol.solve(x, f"../mesh_generation/C-Shape_meshes/C_00065_0005_0004_10x10_10000.msh")

@@ -1,3 +1,2 @@
-C_<Outer radius in meter>_<Inner radius in meter>_<Gap width in meter>_<rows>x<columns>_<optimal frequency>.msh
+Mtr_<Outer radius [m]>_<Inner radius [m]>_<Gab width [m]>_<#layers>_<rows>x<columns>_<optimal_frequency>.msh
 The dot of floating point numbers have been removed (0.003 -> 0003)
-
